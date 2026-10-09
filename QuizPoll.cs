@@ -22,11 +22,13 @@ public static class QuizPoll
     public static string Question(DateTime game) =>
         $"Играем в это воскресенье в 19:00?\n{game.Day.ToString("00", CultureInfo.InvariantCulture)}-{Months[game.Month - 1]}";
 
-    public static bool IsStart(string? text, string username)
+    public static bool IsStart(string? text, string username) => IsCommand(text, username, "/start");
+
+    public static bool IsCommand(string? text, string username, string expected)
     {
         var command = text?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-        return command == "/start" ||
-            string.Equals(command, $"/start@{username}", StringComparison.OrdinalIgnoreCase);
+        return command == expected ||
+            string.Equals(command, $"{expected}@{username}", StringComparison.OrdinalIgnoreCase);
     }
 
     public static Dictionary<string, object?> Payload(long chatId, int? threadId, DateTime game) => new()

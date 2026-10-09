@@ -2,5 +2,6 @@ bin/
 obj/
 .vs/
 .env
+appsettings.Development.json
 *.user
 *.suo

@@ -1,0 +1,21 @@
+name: telegram-quiz-arrangement
+services:
+  bot:
+    build: .
+    image: telegram-quiz-arrangement:local
+    container_name: telegram-quiz-arrangement
+    restart: unless-stopped
+    environment:
+      QUIZ_TIME_ZONE: Asia/Dubai
+    volumes:
+      - type: bind
+        source: ./appsettings.Development.json
+        target: /app/appsettings.json
+        read_only: true
+        bind:
+          create_host_path: false
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'

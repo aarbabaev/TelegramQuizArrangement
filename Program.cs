@@ -1,15 +1,35 @@
 using TelegramQuizArrangement;
+using System.Text.Json;
+using System.Text;
+
+Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
 if (args.Contains("--self-test"))
 {
     QuizPoll.SelfTest();
+    GroupAccess.SelfTest();
     return;
 }
 
-var token = Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN");
+string? token;
+long ownerUserId;
+try
+{
+    var settingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+    using var settings = JsonDocument.Parse(File.ReadAllText(settingsPath));
+    token = settings.RootElement.GetProperty("Telegram").GetProperty("BotToken").GetString();
+    ownerUserId = settings.RootElement.GetProperty("Telegram").GetProperty("OwnerUserId").GetInt64();
+    if (ownerUserId <= 0) throw new InvalidOperationException();
+}
+catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or KeyNotFoundException or InvalidOperationException)
+{
+    Console.Error.WriteLine("Не удалось прочитать appsettings.json. Укажите Telegram:BotToken и положительный Telegram:OwnerUserId.");
+    Environment.ExitCode = 1;
+    return;
+}
 if (string.IsNullOrWhiteSpace(token))
 {
-    Console.Error.WriteLine("Укажите токен BotFather в переменной TELEGRAM_BOT_TOKEN.");
+    Console.Error.WriteLine("Укажите токен BotFather в appsettings.json, поле Telegram:BotToken.");
     Environment.ExitCode = 1;
     return;
 }
@@ -31,15 +51,24 @@ try
     {
         try
         {
-            var updates = await api.Call("getUpdates", new { offset, timeout = 30, allowed_updates = new[] { "message" } }, cancellation.Token);
+            var updates = await api.Call("getUpdates", new { offset, timeout = 30, allowed_updates = new[] { "message", "my_chat_member" } }, cancellation.Token);
             foreach (var update in updates.EnumerateArray())
             {
                 var updateId = update.GetProperty("update_id").GetInt64();
                 try
                 {
+                    if (update.TryGetProperty("my_chat_member", out var membership))
+                    {
+                        if (GroupAccess.MustLeave(membership, ownerUserId))
+                        {
+                            await api.Call("leaveChat", new { chat_id = membership.GetProperty("chat").GetProperty("id").GetInt64() }, cancellation.Token);
+                            Console.WriteLine("Бот покинул группу: добавление разрешено только владельцу.");
+                        }
+                        continue;
+                    }
                     if (!update.TryGetProperty("message", out var message)
-                        || !message.TryGetProperty("text", out var text)
-                        || !QuizPoll.IsStart(text.GetString(), username)) continue;
+                        || !message.TryGetProperty("text", out var text)) continue;
+                    if (!QuizPoll.IsStart(text.GetString(), username)) continue;
                     var chat = message.GetProperty("chat");
                     var chatId = chat.GetProperty("id").GetInt64();
                     int? thread = message.TryGetProperty("message_thread_id", out var threadId) ? threadId.GetInt32() : null;
