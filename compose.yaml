@@ -8,6 +8,7 @@ services:
     environment:
       QUIZ_TIME_ZONE: Asia/Dubai
     volumes:
+      - schedule-data:/app/data
       - type: bind
         source: ./appsettings.Development.json
         target: /app/appsettings.json
@@ -19,3 +20,5 @@ services:
       options:
         max-size: 10m
         max-file: '3'
+volumes:
+  schedule-data:

@@ -5,3 +5,4 @@
 .vs/
 .env
 appsettings*.json
+data/
