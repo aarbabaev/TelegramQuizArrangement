@@ -10,6 +10,12 @@ public static class GroupAccess
         && IsMember(update.GetProperty("new_chat_member"))
         && update.GetProperty("from").GetProperty("id").GetInt64() != ownerUserId;
 
+    public static bool ShouldBind(JsonElement update, long ownerUserId) =>
+        update.GetProperty("chat").GetProperty("type").GetString() is "group" or "supergroup"
+        && !IsMember(update.GetProperty("old_chat_member"))
+        && IsMember(update.GetProperty("new_chat_member"))
+        && update.GetProperty("from").GetProperty("id").GetInt64() == ownerUserId;
+
     private static bool IsMember(JsonElement member) => member.GetProperty("status").GetString() switch
     {
         "member" or "administrator" or "creator" => true,

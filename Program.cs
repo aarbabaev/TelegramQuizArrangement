@@ -11,6 +11,8 @@ if (args.Contains("--self-test"))
     GroupAccess.SelfTest();
     await QuizWordingTests.Run();
     await WeeklyScheduleTests.Run();
+    await ThirdAnswerRotation.SelfTest();
+    await PollPublisherTests.Run();
     return;
 }
 
@@ -59,13 +61,15 @@ long offset = 0;
 
 try
 {
+    var publisher = new PollPublisher(Path.Combine(AppContext.BaseDirectory, "data"), api.Call);
+    Task SendPoll(object payload, CancellationToken ct) => publisher.Send(payload, ct);
     using var schedule = new WeeklySchedule(scheduleSettings,
         Path.Combine(AppContext.BaseDirectory, "data"), DateTimeOffset.UtcNow);
     Console.WriteLine(schedule.NextRun(DateTimeOffset.UtcNow) is DateTime next
         ? $"Schedule: Thursday 20:00 Asia/Dubai; next {next:yyyy-MM-dd HH:mm}."
         : "Schedule disabled.");
     Task ScheduleTick() => schedule.Tick(DateTimeOffset.UtcNow,
-        (_, ct) => wordingGenerator.Generate(ct), async (payload, ct) => { await api.Call("sendPoll", payload, ct); }, cancellation.Token,
+        (_, ct) => wordingGenerator.Generate(ct), SendPoll, cancellation.Token,
         () => DateTimeOffset.UtcNow);
     var me = await api.Call("getMe", new { }, cancellation.Token);
     var username = me.GetProperty("username").GetString()!;
@@ -92,21 +96,47 @@ try
                             await api.Call("leaveChat", new { chat_id = membership.GetProperty("chat").GetProperty("id").GetInt64() }, cancellation.Token);
                             Console.WriteLine("Бот покинул группу: добавление разрешено только владельцу.");
                         }
+                        else if (GroupAccess.ShouldBind(membership, ownerUserId))
+                        {
+                            schedule.SetDestination(membership.GetProperty("chat").GetProperty("id").GetInt64(), null);
+                            Console.WriteLine("Schedule automatically bound to group where owner added bot.");
+                        }
                         continue;
                     }
-                    if (!update.TryGetProperty("message", out var message)
-                        || !message.TryGetProperty("text", out var text)) continue;
-                    if (!QuizPoll.IsStart(text.GetString(), username)) continue;
+                    if (!update.TryGetProperty("message", out var message)) continue;
+                    var incomingChat = message.GetProperty("chat");
+                    if (incomingChat.GetProperty("type").GetString() is "group" or "supergroup"
+                        && !message.TryGetProperty("sender_chat", out _)
+                        && message.TryGetProperty("from", out var ownerSender)
+                        && ownerSender.GetProperty("id").GetInt64() == ownerUserId)
+                    {
+                        int? incomingThread = message.TryGetProperty("message_thread_id", out var incomingTopic)
+                            ? incomingTopic.GetInt32() : null;
+                        schedule.SetDestination(incomingChat.GetProperty("id").GetInt64(), incomingThread);
+                    }
+                    if (!message.TryGetProperty("text", out var text)) continue;
+                    var setGroup = QuizPoll.IsCommand(text.GetString(), username, "/setgroup");
+                    if (!setGroup && !QuizPoll.IsStart(text.GetString(), username)) continue;
                     var chat = message.GetProperty("chat");
                     var chatId = chat.GetProperty("id").GetInt64();
                     int? thread = message.TryGetProperty("message_thread_id", out var threadId) ? threadId.GetInt32() : null;
+                    if (setGroup)
+                    {
+                        if (chat.GetProperty("type").GetString() is not ("group" or "supergroup")
+                            || message.TryGetProperty("sender_chat", out _)
+                            || !message.TryGetProperty("from", out var sender)
+                            || sender.GetProperty("id").GetInt64() != ownerUserId) continue;
+                        schedule.SetDestination(chatId, thread);
+                        Console.WriteLine("Schedule destination updated by owner; saved in persistent volume.");
+                        continue;
+                    }
                     if (chat.GetProperty("type").GetString() is not ("group" or "supergroup"))
                     {
                         await api.Call("sendMessage", new { chat_id = chatId, text = "Добавьте меня в группу и отправьте /start — я создам опрос о квизе." }, cancellation.Token);
                         continue;
                     }
                     var wording = await wordingGenerator.Generate(cancellation.Token);
-                    await api.Call("sendPoll", QuizPoll.Payload(chatId, thread, QuizPoll.NextGame(DateTimeOffset.UtcNow, zone), wording), cancellation.Token);
+                    await SendPoll(QuizPoll.Payload(chatId, thread, QuizPoll.NextGame(DateTimeOffset.UtcNow, zone), wording), cancellation.Token);
                     Console.WriteLine("Ручной опрос отправлен.");
                 }
                 catch (TelegramApiException error) when (error.Code != 429)

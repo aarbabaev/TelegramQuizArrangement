@@ -24,7 +24,7 @@ public sealed record ScheduleMark(DateTime DueLocal, DateTime GameLocal, string 
 public sealed class WeeklySchedule : IDisposable
 {
     private static readonly TimeZoneInfo Zone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Dubai");
-    private readonly ScheduleSettings settings;
+    private ScheduleSettings settings;
     private readonly string directory;
     private readonly DateTime firstRun;
     private readonly FileStream? processLock;
@@ -36,6 +36,14 @@ public sealed class WeeklySchedule : IDisposable
         this.directory = directory;
         if (!settings.Enabled) return;
         Directory.CreateDirectory(directory);
+        var targetPath = Path.Combine(directory, "target.json");
+        if (File.Exists(targetPath))
+        {
+            var target = JsonSerializer.Deserialize<ScheduleTarget>(File.ReadAllText(targetPath))
+                ?? throw new InvalidOperationException("Invalid schedule target.");
+            if (target.ChatId >= 0 || target.ThreadId is <= 0) throw new InvalidOperationException("Invalid schedule target.");
+            this.settings = settings with { ChatId = target.ChatId, ThreadId = target.ThreadId };
+        }
         processLock = new FileStream(Path.Combine(directory, "schedule.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         try
         {
@@ -162,5 +170,15 @@ public sealed class WeeklySchedule : IDisposable
         }
         finally { if (File.Exists(temp)) File.Delete(temp); }
     }
+    public void SetDestination(long chatId, int? threadId)
+    {
+        if (!settings.Enabled || chatId >= 0 || threadId is <= 0)
+            throw new InvalidOperationException("Invalid schedule target or disabled schedule.");
+        if (settings.ChatId == chatId && settings.ThreadId == threadId) return;
+        AtomicWrite(Path.Combine(directory, "target.json"), JsonSerializer.Serialize(new ScheduleTarget(chatId, threadId)));
+        settings = settings with { ChatId = chatId, ThreadId = threadId };
+    }
+
+    private sealed record ScheduleTarget(long ChatId, int? ThreadId);
     public void Dispose() => processLock?.Dispose();
 }
